@@ -67,11 +67,66 @@
         .clause-line {
             margin-bottom: 0.1rem;
         }
+
+        /* Text finder styles */
+        .text-finder {
+            border: 1px solid #ccc;
+            padding: 0.5rem;
+            margin-bottom: 1rem;
+        }
+
+        .text-finder input[type="text"] {
+            width: 100%;
+            box-sizing: border-box;
+            font-family: monospace;
+            padding: 0.25rem;
+        }
+
+        .text-finder-results {
+            margin-top: 0.5rem;
+            max-height: 200px;
+            overflow-y: auto;
+            border-top: 1px solid #eee;
+            padding-top: 0.5rem;
+        }
+
+        .text-finder-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 0.25rem;
+            padding-bottom: 0.25rem;
+            border-bottom: 1px dashed #eee;
+            font-size: 0.9rem;
+        }
+
+        .text-finder-item span {
+            margin-right: 0.5rem;
+        }
+
+        .text-finder-meta {
+            color: #555;
+            font-size: 0.8rem;
+        }
     </style>
 </head>
 
 <body>
     <h1>Classical Tibetan Quote Detection</h1>
+
+    <!-- TEXT FINDER UI -->
+    <div class="text-finder">
+        <strong>Find a text from Derge / Nyingma / ACIP Sungbum</strong>
+        <p style="margin-top:0.25rem;">
+            Start typing part of the text name or filename (e.g. <code>D406</code>), then click a match to load it into
+            the detector.
+        </p>
+        <input type="text" id="textSearchInput" placeholder="Type part of a text name or filename...">
+        <div id="textSearchStatus" style="margin-top:0.25rem; font-size:0.8rem; color:#555;">
+            Loading corpus indexes...
+        </div>
+        <div id="textSearchResults" class="text-finder-results"></div>
+    </div>
 
     <p>
         Paste your Tibetan text below (clauses separated by <code>/</code> or <code>//</code>),
@@ -87,8 +142,197 @@
 
     <div id="results" style="margin-top: 1.5rem;"></div>
 
+    <!-- JSZip for reading zip archives in the browser -->
+    <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+
     <script>
-        // --- Configuration (ported from Python) ---
+        /********************************************************************
+         * CONFIGURATION FOR TEXT FINDER
+         ********************************************************************/
+
+        // Adjust these URLs to wherever you host your zip and manifest files.
+        // The manifest files should be small JSONs listing the texts inside each zip.
+        const CORPORA = [
+            {
+                id: "derge",
+                label: "Derge",
+                zipUrl: "zips/all_derge.zip",
+                manifestUrl: "zips/derge_manifest.json"
+            },
+            {
+                id: "nyingma",
+                label: "Nyingma",
+                zipUrl: "zips/all_nyingma.zip",
+                manifestUrl: "zips/nyingma_manifest.json"
+            },
+            {
+                id: "acip",
+                label: "ACIP Sungbum",
+                zipUrl: "zips/all_sungbum.zip",
+                manifestUrl: "zips/sungbum_manifest.json"
+            }
+        ];
+
+        // Will hold all entries from all corpora:
+        // {
+        //   corpusId, corpusLabel, zipUrl,
+        //   path,        // path inside zip, e.g. "D406.txt"
+        //   displayName, // human-readable label; may just be the filename
+        //   index        // stable numeric ID for this entry
+        // }
+        const ALL_TEXT_ENTRIES = [];
+
+        // Cache of JSZip instances, one per corpusId.
+        const ZIP_CACHE = {};
+
+        /********************************************************************
+         * TEXT FINDER: MANIFEST LOADING
+         ********************************************************************/
+
+        async function loadManifests() {
+            const statusEl = document.getElementById("textSearchStatus");
+            try {
+                let idxCounter = 0;
+                for (const corpus of CORPORA) {
+                    const resp = await fetch(corpus.manifestUrl);
+                    if (!resp.ok) {
+                        console.warn(`Failed to load manifest for ${corpus.id}:`, resp.status);
+                        continue;
+                    }
+                    const manifest = await resp.json();
+                    // Expect manifest to be an array of objects like:
+                    // { "file": "D406.txt", "title": "D406 Some Text Name" }
+                    for (const entry of manifest) {
+                        const path = entry.file;
+                        const title = entry.title || entry.file;
+                        ALL_TEXT_ENTRIES.push({
+                            corpusId: corpus.id,
+                            corpusLabel: corpus.label,
+                            zipUrl: corpus.zipUrl,
+                            path: path,
+                            displayName: title,
+                            index: idxCounter++
+                        });
+                    }
+                }
+
+                if (ALL_TEXT_ENTRIES.length === 0) {
+                    statusEl.textContent = "No texts found in manifests (check manifest URLs).";
+                } else {
+                    statusEl.textContent = `Loaded ${ALL_TEXT_ENTRIES.length} texts. Type to search.`;
+                }
+            } catch (err) {
+                console.error("Error loading manifests:", err);
+                statusEl.textContent = "Error loading indexes (see console).";
+            }
+        }
+
+        /********************************************************************
+         * TEXT FINDER: SEARCH + RENDER
+         ********************************************************************/
+
+        function searchTexts(query, limit = 10) {
+            if (!query) return [];
+            const q = query.toLowerCase();
+
+            // Simple substring search over displayName and path
+            const matches = [];
+            for (const entry of ALL_TEXT_ENTRIES) {
+                const dname = entry.displayName.toLowerCase();
+                const pth = entry.path.toLowerCase();
+                const idxName = dname.indexOf(q);
+                const idxPath = pth.indexOf(q);
+                if (idxName === -1 && idxPath === -1) continue;
+
+                // Score: prefer matches earlier in the string, prefer shorter names
+                const rawIdx = idxName !== -1 ? idxName : 1000 + idxPath;
+                const score = rawIdx + 0.001 * dname.length;
+                matches.push({ entry, score });
+            }
+
+            matches.sort((a, b) => a.score - b.score);
+            return matches.slice(0, limit).map(m => m.entry);
+        }
+
+        function renderSearchResults(entries) {
+            const resultsEl = document.getElementById("textSearchResults");
+            const statusEl = document.getElementById("textSearchStatus");
+
+            if (!entries || entries.length === 0) {
+                resultsEl.innerHTML = "<em>No matches.</em>";
+                return;
+            }
+
+            statusEl.textContent = `Showing top ${entries.length} matches.`;
+
+            let html = "";
+            for (const entry of entries) {
+                const safeName = escapeHtml(entry.displayName);
+                const safePath = escapeHtml(entry.path);
+                const safeCorpus = escapeHtml(entry.corpusLabel);
+
+                html += `
+<div class="text-finder-item">
+  <div>
+    <span>${safeName}</span>
+    <div class="text-finder-meta">[${safeCorpus}] ${safePath}</div>
+  </div>
+  <button type="button"
+          data-entry-index="${entry.index}">
+    Load
+  </button>
+</div>`;
+            }
+
+            resultsEl.innerHTML = html;
+        }
+
+        /********************************************************************
+         * TEXT FINDER: ZIP LOADING + TEXT EXTRACTION
+         ********************************************************************/
+
+        async function getZipForCorpus(corpusId, zipUrl) {
+            if (!ZIP_CACHE[corpusId]) {
+                // First time: fetch and load the zip
+                const resp = await fetch(zipUrl);
+                if (!resp.ok) {
+                    throw new Error(`Failed to fetch zip for ${corpusId}: ${resp.status}`);
+                }
+                const buf = await resp.arrayBuffer();
+                ZIP_CACHE[corpusId] = JSZip.loadAsync(buf);
+            }
+            return ZIP_CACHE[corpusId];
+        }
+
+        async function loadTextEntryIntoTextarea(entry) {
+            const statusEl = document.getElementById("textSearchStatus");
+            try {
+                statusEl.textContent = `Loading ${entry.displayName} from ${entry.corpusLabel}...`;
+
+                const zip = await getZipForCorpus(entry.corpusId, entry.zipUrl);
+                const file = zip.file(entry.path);
+                if (!file) {
+                    alert(`Could not find file "${entry.path}" in ${entry.corpusLabel} zip.`);
+                    statusEl.textContent = "File not found in zip.";
+                    return;
+                }
+
+                const text = await file.async("string");
+                const textarea = document.getElementById("inputText");
+                textarea.value = text;
+                statusEl.textContent = `Loaded ${entry.displayName} into the detector.`;
+                textarea.focus();
+            } catch (err) {
+                console.error("Error loading text from zip:", err);
+                alert("Failed to load text from zip (see console).");
+                statusEl.textContent = "Error loading text.";
+            }
+        }
+
+        /********************************************************************
+         * EXISTING QUOTE DETECTOR CODE (UNCHANGED)
+         ********************************************************************/
+
         const MAX_QUOTE_LENGTH_CHARS = 500;
 
         function getOpenCloseRegexes(lasnas) {
@@ -116,13 +360,10 @@
                 "'dir tshigs su bcad pa",
             ];
             if (lasnas == true) {
-                // remove "las" and "nas" alone
-                //potentialOpeners = potentialOpeners.filter(opener => opener !== "las" && opener !== "nas");
                 potentialOpeners.push("las$");
             } else {
                 potentialOpeners.push("las");
             }
-            // sort by decreasing length
             potentialOpeners.sort((a, b) => b.length - a.length);
 
             let baseClosers = [
@@ -162,30 +403,21 @@
                 "zhes bstan to",
                 "zhes pa smra'o",
             ];
-            // we should ignore when "zhes" or "ces" is followed by "bya ba" alone
-            // "zhes bya ba", "ces bya ba"
-
-            // sort by decreasing length
             baseClosers.sort((a, b) => b.length - a.length);
-            // add regex zhes(?! bya ba) at the end so it matches last
             const extraCloserRegex = "zhes(?! bya ba)";
 
-            // --- Helper: escape text for inclusion in a regex ---
             function escapeRegExp(str) {
                 return str.replace(/[.*+?^{}()|[\]\\]/g, '\\$&');
             }
 
-            // Build opener/closer regex sources.
             const openerRegexSrc =
                 "(\\b" + potentialOpeners.map(escapeRegExp).join("\\b|\\b") + "\\b)";
 
             const closerRegexParts = baseClosers.map(escapeRegExp);
-            // Append the *raw* regex for zhes(?! bya ba)
             closerRegexParts.push(extraCloserRegex);
             const closerRegexSrc =
                 "(\\b" + closerRegexParts.join("\\b|\\b") + "\\b)";
 
-            // Compile regexes (Unicode aware)
             const openerRegex = new RegExp(openerRegexSrc, "u");
             const closerRegex = new RegExp(closerRegexSrc, "u");
 
@@ -195,7 +427,6 @@
             return [openerRegex, closerRegex, openerRegexSrc, closerRegexSrc];
         }
 
-        // --- Helper: HTML escape ---
         function escapeHtml(str) {
             return str
                 .replace(/&/g, "&amp;")
@@ -205,20 +436,15 @@
                 .replace(/'/g, "&#39;");
         }
 
-        // --- Clause splitting (ported from Python split_clauses) ---
         function splitClauses(text) {
-            // mimic full_text.replace("\n", " ").replace("\r", " ")
             const normalized = text.replace(/\r\n?/g, " ").replace(/\n/g, " ");
-            // split on / or //
             return normalized
                 .split(/\s*\/{1,2}\s*/u)
                 .map(c => c.trim())
                 .filter(c => c.length > 0);
         }
 
-        // --- Quote detection (ported from Python detect_quotes) ---
         function detectQuotes(clauses) {
-            // We need to apply user preferences
             var las_nas_shunit = document.getElementById("lasnas").checked;
             console.log("las_nas_shunit =", las_nas_shunit);
 
@@ -229,10 +455,7 @@
 
             while (i < clauses.length) {
                 const clause = clauses[i];
-
-                // Check if clause contains a potential opener (Python used re.search, not ^)
                 const openerMatch = openerRegex.exec(clause);
-                // No 'g' flag, but we reset lastIndex anyway for safety
                 openerRegex.lastIndex = 0;
 
                 if (openerMatch) {
@@ -244,10 +467,8 @@
                             const openerText = openerMatch[0];
                             const closerText = closerMatch[0];
 
-                            // if opener is only "las" or "nas" and closer is only "zhes", skip
                             if ((openerText === "las" || openerText === "nas") && closerText === "zhes") {
-                                //console.log("Skipping ambiguous syllable case at clauses", i, j);
-                                continue; // keep searching for another closer
+                                continue;
                             }
 
                             const quoteContent = clauses.slice(i + 1, j).join(" ");
@@ -257,9 +478,9 @@
                                     labels[k] = "inquote";
                                 }
                                 labels[j] = "closer";
-                                i = j; // jump forward
+                                i = j;
                             }
-                            break; // whether we used it or not, stop scanning further j
+                            break;
                         }
                     }
                 }
@@ -270,10 +491,7 @@
             return labels;
         }
 
-        // --- Rendering (ported from Python render_html, adapted for DOM) ---
         function renderResults(clauses, labels) {
-
-            // We need to apply user preferences
             var las_nas_shunit = document.getElementById("lasnas").checked;
             console.log("las_nas_shunit =", las_nas_shunit);
 
@@ -288,7 +506,6 @@
 
             let html = "";
 
-            // Heatmap header
             html += "<h2>Quote Detection Heatmap</h2>";
             html += "<div class='heatmap'>";
 
@@ -300,7 +517,6 @@
 
             html += "</div><hr>";
 
-            // Full text with inline highlights
             for (let i = 0; i < clauses.length; i++) {
                 const clause = clauses[i];
                 const label = labels[i];
@@ -319,8 +535,8 @@
                             escapeHtml(clause.slice(0, start)) +
                             `<span class="opener">${escapeHtml(clause.slice(start, end))}</span>` +
                             `<span class="inquote">` +
-                            escapeHtml(clause.slice(end))
-                            + `</span>`;
+                            escapeHtml(clause.slice(end)) +
+                            `</span>`;
                     }
                 } else if (label === "closer") {
                     const localCloserRe = new RegExp(closerRegexSrc, "u");
@@ -345,7 +561,11 @@
             return html;
         }
 
-        // --- Wire up UI ---
+        /********************************************************************
+         * WIRE UP UI
+         ********************************************************************/
+
+        // Quote detector button
         document.getElementById("runBtn").addEventListener("click", () => {
             const input = document.getElementById("inputText").value || "";
             const resultsDiv = document.getElementById("results");
@@ -359,6 +579,36 @@
             const labels = detectQuotes(clauses);
             const html = renderResults(clauses, labels);
             resultsDiv.innerHTML = html;
+        });
+
+        // Text search input
+        document.getElementById("textSearchInput").addEventListener("input", (e) => {
+            const q = e.target.value.trim();
+            if (!q) {
+                document.getElementById("textSearchResults").innerHTML = "";
+                document.getElementById("textSearchStatus").textContent = "Type to search.";
+                return;
+            }
+            const matches = searchTexts(q, 10);
+            renderSearchResults(matches);
+        });
+
+        // Delegate click for "Load" buttons in search results
+        document.getElementById("textSearchResults").addEventListener("click", (e) => {
+            const btn = e.target.closest("button[data-entry-index]");
+            if (!btn) return;
+            const idx = parseInt(btn.getAttribute("data-entry-index"), 10);
+            const entry = ALL_TEXT_ENTRIES.find(e => e.index === idx);
+            if (!entry) {
+                alert("Could not find selected entry (internal error).");
+                return;
+            }
+            loadTextEntryIntoTextarea(entry);
+        });
+
+        // Kick off manifest loading after page is ready
+        window.addEventListener("load", () => {
+            loadManifests();
         });
     </script>
 </body>
