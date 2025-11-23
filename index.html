@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8">
+    <title>Classical Tibetan Quote Detection</title>
+    <style>
+        body {
+            font-family: monospace;
+            margin: 1rem;
+        }
+
+        h1 {
+            margin-top: 0;
+        }
+
+        textarea {
+            width: 100%;
+            max-width: 100%;
+            box-sizing: border-box;
+            font-family: monospace;
+        }
+
+        button {
+            margin-top: 0.5rem;
+            padding: 0.4rem 0.8rem;
+            font-family: inherit;
+            cursor: pointer;
+        }
+
+        .heatmap {
+            display: flex;
+            flex-wrap: wrap;
+            margin-bottom: 1em;
+        }
+
+        .heatbox {
+            width: 10px;
+            height: 10px;
+            margin: 1px;
+            border: 1px solid #ccc;
+        }
+
+        .opener {
+            background-color: #d0f0fd;
+        }
+
+        .inquote {
+            background-color: #fef7cb;
+        }
+
+        .closer {
+            background-color: #ffd0d0;
+        }
+
+        .none {
+            background-color: white;
+        }
+
+        span.opener,
+        span.inquote,
+        span.closer {
+            padding: 0 2px;
+            border-radius: 3px;
+        }
+
+        .clause-line {
+            margin-bottom: 0.1rem;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>Classical Tibetan Quote Detection</h1>
+
+    <p>
+        Paste your Tibetan text below (clauses separated by <code>/</code> or <code>//</code>),
+        then click <strong>Detect quotes</strong>.
+    </p>
+
+    <textarea id="inputText" rows="10" placeholder="Paste Tibetan text here..."></textarea>
+    <br>
+    <button id="runBtn">Detect quotes</button>
+
+    <div id="results" style="margin-top: 1.5rem;"></div>
+
+    <script>
+        // --- Configuration (ported from Python) ---
+        const MAX_QUOTE_LENGTH_CHARS = 500;
+
+        let potentialOpeners = [
+            "las kyang ji skad du",
+            "las kyang",
+            "las",
+            "ji skad du",
+            "las 'byung ba",
+            "las ji skad du",
+            "de bzhin du",
+            "nas",
+            "de'i phyir",
+            "ji skad smras pa",
+            "'dir smras pa",
+            "de nyid kyi phyir",
+            "mdo las",
+            "rgyud las",
+            "de nyid las",
+            "bstan bcos las",
+            "las kyang",
+            "de skad du",
+            "di skad ces",
+            "tshigs su bcad pa",
+            "'dir tshigs su bcad pa",
+        ];
+        // sort by decreasing length
+        potentialOpeners.sort((a, b) => b.length - a.length);
+
+        let baseClosers = [
+            "zhes gsungs so",
+            "zhes ji skad gsungs pa lta bu'o",
+            "zhes 'byung ngo",
+            "zhes gsungs pa'i phyir ro",
+            "ces gsungs so",
+            "zhes gsungs te",
+            "zhes gsungs pa",
+            "zhes gsungs pa yin no",
+            "zhes gsungs pa lta bu'o",
+            "gsungs so",
+            "zhes bya ba dang",
+            "ces gsungs te",
+            "ces gsungs pa'i phyir ro",
+            "zhes bya ba gsungs so",
+            "zhes bshad do",
+            "ces gsungs pa lta bu'o",
+            "zhes pa",
+            "zhes gsungs pa nyid blta bar bya'o",
+            "zhes gsungs pa'o",
+            "zhes bshad pa'i phyir ro",
+            "ces gsungs pa",
+            "zhes bshad pa lta bu'o",
+            "ces bya ba gsungs te",
+            "zhes gsungs",
+            "zhe'o",
+            "zhes rgya cher gsungs so",
+            "gsungs pa lta bu'o",
+            "zhes rgya cher gsungs pa lta bu'o",
+            "zhes bshad do",
+            "zhes bya ba smos",
+            "ji lta ba bzhin du rab tu shes so",
+            "ces bya ba smos",
+            "ces bstan to",
+            "zhes bstan to",
+            "zhes pa smra'o",
+        ];
+        // we should ignore when "zhes" or "ces" is followed by "bya ba" alone
+        // "zhes bya ba", "ces bya ba"
+
+        // sort by decreasing length
+        baseClosers.sort((a, b) => b.length - a.length);
+        // add regex zhes(?! bya ba) at the end so it matches last
+        const extraCloserRegex = "zhes(?! bya ba)";
+
+        // --- Helper: escape text for inclusion in a regex ---
+        function escapeRegExp(str) {
+            return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        }
+
+        // Build opener/closer regex sources.
+        const openerRegexSrc =
+            "\\b(" + potentialOpeners.map(escapeRegExp).join("|") + ")\\b";
+
+        const closerRegexParts = baseClosers.map(escapeRegExp);
+        // Append the *raw* regex for zhes(?! bya ba)
+        closerRegexParts.push(extraCloserRegex);
+        const closerRegexSrc =
+            "\\b(" + closerRegexParts.join("|") + ")\\b";
+
+        // Compile regexes (Unicode aware)
+        const openerRegex = new RegExp(openerRegexSrc, "u");
+        const closerRegex = new RegExp(closerRegexSrc, "u");
+
+        console.log("Opener regex:", openerRegex);
+        console.log("Closer regex:", closerRegex);
+
+        // --- Helper: HTML escape ---
+        function escapeHtml(str) {
+            return str
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;")
+                .replace(/'/g, "&#39;");
+        }
+
+        // --- Clause splitting (ported from Python split_clauses) ---
+        function splitClauses(text) {
+            // mimic full_text.replace("\n", " ").replace("\r", " ")
+            const normalized = text.replace(/\r\n?/g, " ").replace(/\n/g, " ");
+            // split on / or //
+            return normalized
+                .split(/\s*\/{1,2}\s*/u)
+                .map(c => c.trim())
+                .filter(c => c.length > 0);
+        }
+
+        // --- Quote detection (ported from Python detect_quotes) ---
+        function detectQuotes(clauses) {
+            const labels = new Array(clauses.length).fill("none");
+            let i = 0;
+
+            while (i < clauses.length) {
+                const clause = clauses[i];
+
+                // Check if clause contains a potential opener (Python used re.search, not ^)
+                const openerMatch = openerRegex.exec(clause);
+                // No 'g' flag, but we reset lastIndex anyway for safety
+                openerRegex.lastIndex = 0;
+
+                if (openerMatch) {
+                    for (let j = i + 1; j < clauses.length; j++) {
+                        const closerMatch = closerRegex.exec(clauses[j]);
+                        closerRegex.lastIndex = 0;
+
+                        if (closerMatch) {
+                            const openerText = openerMatch[0];
+                            const closerText = closerMatch[0];
+
+                            // if opener is only "las" or "nas" and closer is only "zhes", skip
+                            if ((openerText === "las" || openerText === "nas") && closerText === "zhes") {
+                                console.log("Skipping ambiguous syllable case at clauses", i, j);
+                                continue; // keep searching for another closer
+                            }
+
+                            const quoteContent = clauses.slice(i + 1, j).join(" ");
+                            if (quoteContent.length <= MAX_QUOTE_LENGTH_CHARS) {
+                                labels[i] = "opener";
+                                for (let k = i + 1; k < j; k++) {
+                                    labels[k] = "inquote";
+                                }
+                                labels[j] = "closer";
+                                i = j; // jump forward
+                            }
+                            break; // whether we used it or not, stop scanning further j
+                        }
+                    }
+                }
+
+                i += 1;
+            }
+
+            return labels;
+        }
+
+        // --- Rendering (ported from Python render_html, adapted for DOM) ---
+        function renderResults(clauses, labels) {
+            const colorMap = {
+                opener: "#d0f0fd",
+                inquote: "#fef7cb",
+                closer: "#ffd0d0",
+                none: "white"
+            };
+
+            let html = "";
+
+            // Heatmap header
+            html += "<h2>Quote Detection Heatmap</h2>";
+            html += "<div class='heatmap'>";
+
+            for (let i = 0; i < labels.length; i++) {
+                const lbl = labels[i];
+                const idxStr = i.toString().padStart(4, "0");
+                html += `<a href="#line-${idxStr}"><div class="heatbox ${lbl}"></div></a>`;
+            }
+
+            html += "</div><hr>";
+
+            // Full text with inline highlights
+            for (let i = 0; i < clauses.length; i++) {
+                const clause = clauses[i];
+                const label = labels[i];
+                const idxStr = i.toString().padStart(4, "0");
+                const clauseEsc = escapeHtml(clause);
+
+                let highlighted = clauseEsc;
+
+                if (label === "opener") {
+                    const localOpenerRe = new RegExp(openerRegexSrc, "u");
+                    const m = localOpenerRe.exec(clause);
+                    if (m) {
+                        const start = m.index;
+                        const end = start + m[0].length;
+                        highlighted =
+                            escapeHtml(clause.slice(0, start)) +
+                            `<span class="opener">${escapeHtml(clause.slice(start, end))}</span>` +
+                            escapeHtml(clause.slice(end));
+                    }
+                } else if (label === "closer") {
+                    const localCloserRe = new RegExp(closerRegexSrc, "u");
+                    const m = localCloserRe.exec(clause);
+                    if (m) {
+                        const start = m.index;
+                        const end = start + m[0].length;
+                        highlighted =
+                            escapeHtml(clause.slice(0, start)) +
+                            `<span class="closer">${escapeHtml(clause.slice(start, end))}</span>` +
+                            escapeHtml(clause.slice(end));
+                    }
+                } else if (label === "inquote") {
+                    highlighted = `<span class="inquote">${clauseEsc}</span>`;
+                }
+
+                html += `<div id="line-${idxStr}" class="clause-line"><strong>${idxStr}:</strong> ${highlighted}</div>`;
+            }
+
+            return html;
+        }
+
+        // --- Wire up UI ---
+        document.getElementById("runBtn").addEventListener("click", () => {
+            const input = document.getElementById("inputText").value || "";
+            const resultsDiv = document.getElementById("results");
+
+            const clauses = splitClauses(input);
+            if (clauses.length === 0) {
+                resultsDiv.innerHTML = "<p><em>No clauses found. Did you paste any text?</em></p>";
+                return;
+            }
+
+            const labels = detectQuotes(clauses);
+            const html = renderResults(clauses, labels);
+            resultsDiv.innerHTML = html;
+        });
+    </script>
+</body>
+
+</html>
