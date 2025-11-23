@@ -80,6 +80,9 @@
 
     <textarea id="inputText" rows="10" placeholder="Paste Tibetan text here..."></textarea>
     <br>
+    <input type="checkbox" id="lasnas" name="lasnas" value="lasnas" checked="true">
+    <label for="lasnas"> Restrict las and nas to end-of-shunit</label><br>
+    <br>
     <button id="runBtn">Detect quotes</button>
 
     <div id="results" style="margin-top: 1.5rem;"></div>
@@ -88,98 +91,109 @@
         // --- Configuration (ported from Python) ---
         const MAX_QUOTE_LENGTH_CHARS = 500;
 
-        let potentialOpeners = [
-            "las kyang ji skad du",
-            "las kyang",
-            "las",
-            "ji skad du",
-            "las 'byung ba",
-            "las ji skad du",
-            "de bzhin du",
-            "nas",
-            "de'i phyir",
-            "ji skad smras pa",
-            "'dir smras pa",
-            "de nyid kyi phyir",
-            "mdo las",
-            "rgyud las",
-            "de nyid las",
-            "bstan bcos las",
-            "las kyang",
-            "de skad du",
-            "di skad ces",
-            "tshigs su bcad pa",
-            "'dir tshigs su bcad pa",
-        ];
-        // sort by decreasing length
-        potentialOpeners.sort((a, b) => b.length - a.length);
+        function getOpenCloseRegexes(lasnas) {
 
-        let baseClosers = [
-            "zhes gsungs so",
-            "zhes ji skad gsungs pa lta bu'o",
-            "zhes 'byung ngo",
-            "zhes gsungs pa'i phyir ro",
-            "ces gsungs so",
-            "zhes gsungs te",
-            "zhes gsungs pa",
-            "zhes gsungs pa yin no",
-            "zhes gsungs pa lta bu'o",
-            "gsungs so",
-            "zhes bya ba dang",
-            "ces gsungs te",
-            "ces gsungs pa'i phyir ro",
-            "zhes bya ba gsungs so",
-            "zhes bshad do",
-            "ces gsungs pa lta bu'o",
-            "zhes pa",
-            "zhes gsungs pa nyid blta bar bya'o",
-            "zhes gsungs pa'o",
-            "zhes bshad pa'i phyir ro",
-            "ces gsungs pa",
-            "zhes bshad pa lta bu'o",
-            "ces bya ba gsungs te",
-            "zhes gsungs",
-            "zhe'o",
-            "zhes rgya cher gsungs so",
-            "gsungs pa lta bu'o",
-            "zhes rgya cher gsungs pa lta bu'o",
-            "zhes bshad do",
-            "zhes bya ba smos",
-            "ji lta ba bzhin du rab tu shes so",
-            "ces bya ba smos",
-            "ces bstan to",
-            "zhes bstan to",
-            "zhes pa smra'o",
-        ];
-        // we should ignore when "zhes" or "ces" is followed by "bya ba" alone
-        // "zhes bya ba", "ces bya ba"
+            let potentialOpeners = [
+                "las kyang ji skad du",
+                "las kyang",
+                //"las",
+                "ji skad du",
+                "las 'byung ba",
+                "las ji skad du",
+                "de bzhin du",
+                "de'i phyir",
+                "ji skad smras pa",
+                "'dir smras pa",
+                "de nyid kyi phyir",
+                "mdo las",
+                "rgyud las",
+                "de nyid las",
+                "bstan bcos las",
+                "las kyang",
+                "de skad du",
+                "di skad ces",
+                "tshigs su bcad pa",
+                "'dir tshigs su bcad pa",
+            ];
+            if (lasnas == true) {
+                // remove "las" and "nas" alone
+                //potentialOpeners = potentialOpeners.filter(opener => opener !== "las" && opener !== "nas");
+                potentialOpeners.push("las$");
+            } else {
+                potentialOpeners.push("las");
+            }
+            // sort by decreasing length
+            potentialOpeners.sort((a, b) => b.length - a.length);
 
-        // sort by decreasing length
-        baseClosers.sort((a, b) => b.length - a.length);
-        // add regex zhes(?! bya ba) at the end so it matches last
-        const extraCloserRegex = "zhes(?! bya ba)";
+            let baseClosers = [
+                "zhes gsungs so",
+                "zhes ji skad gsungs pa lta bu'o",
+                "zhes 'byung ngo",
+                "zhes gsungs pa'i phyir ro",
+                "ces gsungs so",
+                "zhes gsungs te",
+                "zhes gsungs pa",
+                "zhes gsungs pa yin no",
+                "zhes gsungs pa lta bu'o",
+                "gsungs so",
+                "zhes bya ba dang",
+                "ces gsungs te",
+                "ces gsungs pa'i phyir ro",
+                "zhes bya ba gsungs so",
+                "zhes bshad do",
+                "ces gsungs pa lta bu'o",
+                "zhes pa",
+                "zhes gsungs pa nyid blta bar bya'o",
+                "zhes gsungs pa'o",
+                "zhes bshad pa'i phyir ro",
+                "ces gsungs pa",
+                "zhes bshad pa lta bu'o",
+                "ces bya ba gsungs te",
+                "zhes gsungs",
+                "zhe'o",
+                "zhes rgya cher gsungs so",
+                "gsungs pa lta bu'o",
+                "zhes rgya cher gsungs pa lta bu'o",
+                "zhes bshad do",
+                "zhes bya ba smos",
+                "ji lta ba bzhin du rab tu shes so",
+                "ces bya ba smos",
+                "ces bstan to",
+                "zhes bstan to",
+                "zhes pa smra'o",
+            ];
+            // we should ignore when "zhes" or "ces" is followed by "bya ba" alone
+            // "zhes bya ba", "ces bya ba"
 
-        // --- Helper: escape text for inclusion in a regex ---
-        function escapeRegExp(str) {
-            return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            // sort by decreasing length
+            baseClosers.sort((a, b) => b.length - a.length);
+            // add regex zhes(?! bya ba) at the end so it matches last
+            const extraCloserRegex = "zhes(?! bya ba)";
+
+            // --- Helper: escape text for inclusion in a regex ---
+            function escapeRegExp(str) {
+                return str.replace(/[.*+?^{}()|[\]\\]/g, '\\$&');
+            }
+
+            // Build opener/closer regex sources.
+            const openerRegexSrc =
+                "(\\b" + potentialOpeners.map(escapeRegExp).join("\\b|\\b") + "\\b)";
+
+            const closerRegexParts = baseClosers.map(escapeRegExp);
+            // Append the *raw* regex for zhes(?! bya ba)
+            closerRegexParts.push(extraCloserRegex);
+            const closerRegexSrc =
+                "(\\b" + closerRegexParts.join("\\b|\\b") + "\\b)";
+
+            // Compile regexes (Unicode aware)
+            const openerRegex = new RegExp(openerRegexSrc, "u");
+            const closerRegex = new RegExp(closerRegexSrc, "u");
+
+            console.log("Opener regex:", openerRegex);
+            console.log("Closer regex:", closerRegex);
+
+            return [openerRegex, closerRegex, openerRegexSrc, closerRegexSrc];
         }
-
-        // Build opener/closer regex sources.
-        const openerRegexSrc =
-            "\\b(" + potentialOpeners.map(escapeRegExp).join("|") + ")\\b";
-
-        const closerRegexParts = baseClosers.map(escapeRegExp);
-        // Append the *raw* regex for zhes(?! bya ba)
-        closerRegexParts.push(extraCloserRegex);
-        const closerRegexSrc =
-            "\\b(" + closerRegexParts.join("|") + ")\\b";
-
-        // Compile regexes (Unicode aware)
-        const openerRegex = new RegExp(openerRegexSrc, "u");
-        const closerRegex = new RegExp(closerRegexSrc, "u");
-
-        console.log("Opener regex:", openerRegex);
-        console.log("Closer regex:", closerRegex);
 
         // --- Helper: HTML escape ---
         function escapeHtml(str) {
@@ -204,6 +218,12 @@
 
         // --- Quote detection (ported from Python detect_quotes) ---
         function detectQuotes(clauses) {
+            // We need to apply user preferences
+            var las_nas_shunit = document.getElementById("lasnas").checked;
+            console.log("las_nas_shunit =", las_nas_shunit);
+
+            const [openerRegex, closerRegex, openerRegexSrc, closerRegexSrc] = getOpenCloseRegexes(las_nas_shunit);
+
             const labels = new Array(clauses.length).fill("none");
             let i = 0;
 
@@ -226,7 +246,7 @@
 
                             // if opener is only "las" or "nas" and closer is only "zhes", skip
                             if ((openerText === "las" || openerText === "nas") && closerText === "zhes") {
-                                console.log("Skipping ambiguous syllable case at clauses", i, j);
+                                //console.log("Skipping ambiguous syllable case at clauses", i, j);
                                 continue; // keep searching for another closer
                             }
 
@@ -252,6 +272,13 @@
 
         // --- Rendering (ported from Python render_html, adapted for DOM) ---
         function renderResults(clauses, labels) {
+
+            // We need to apply user preferences
+            var las_nas_shunit = document.getElementById("lasnas").checked;
+            console.log("las_nas_shunit =", las_nas_shunit);
+
+            const [openerRegex, closerRegex, openerRegexSrc, closerRegexSrc] = getOpenCloseRegexes(las_nas_shunit);
+
             const colorMap = {
                 opener: "#d0f0fd",
                 inquote: "#fef7cb",
