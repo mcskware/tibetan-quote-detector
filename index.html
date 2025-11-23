@@ -318,7 +318,9 @@
                         highlighted =
                             escapeHtml(clause.slice(0, start)) +
                             `<span class="opener">${escapeHtml(clause.slice(start, end))}</span>` +
-                            escapeHtml(clause.slice(end));
+                            `<span class="inquote">` +
+                            escapeHtml(clause.slice(end))
+                            + `</span>`;
                     }
                 } else if (label === "closer") {
                     const localCloserRe = new RegExp(closerRegexSrc, "u");
@@ -327,7 +329,9 @@
                         const start = m.index;
                         const end = start + m[0].length;
                         highlighted =
+                            `<span class="inquote">` +
                             escapeHtml(clause.slice(0, start)) +
+                            `</span>` +
                             `<span class="closer">${escapeHtml(clause.slice(start, end))}</span>` +
                             escapeHtml(clause.slice(end));
                     }
