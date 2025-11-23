@@ -3,7 +3,7 @@
 
 <head>
     <meta charset="utf-8">
-    <title>Classical Tibetan Quote Detection</title>
+    <title>Classical Tibetan Quote Detection + Auto/Allo</title>
     <style>
         body {
             font-family: monospace;
@@ -108,11 +108,29 @@
             color: #555;
             font-size: 0.8rem;
         }
+
+        /* Allo/auto badge left of line numbers */
+        .allo-auto-badge {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 3.0em;
+            min-width: 3.0em;
+            padding: 1px 4px;
+            margin-right: 0.4rem;
+            border-radius: 3px;
+            font-size: 0.8rem;
+            color: #ffffff;
+            box-sizing: border-box;
+        }
     </style>
 </head>
 
 <body>
     <h1>Classical Tibetan Quote Detection</h1>
+    <p id="modelStatus" style="font-size:0.9rem; color:#555;">
+        Model: loading auto/allo classifier...
+    </p>
 
     <!-- TEXT FINDER UI -->
     <div class="text-finder">
@@ -145,13 +163,26 @@
     <!-- JSZip for reading zip archives in the browser -->
     <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 
-    <script>
-        /********************************************************************
-         * CONFIGURATION FOR TEXT FINDER
-         ********************************************************************/
+    <!-- Main logic: text finder + quote detector + allo/allo classifier -->
+    <script type="module">
+        import { env, pipeline } from 'https://cdn.jsdelivr.net/npm/@xenova/transformers@2.4.1';
 
-        // Adjust these URLs to wherever you host your zip and manifest files.
-        // The manifest files should be small JSONs listing the texts inside each zip.
+        /********************************************************************
+         * GLOBAL CONFIGS
+         ********************************************************************/
+        const MAX_QUOTE_LENGTH_CHARS = 500;
+        const MAX_LEN = 512; // (not currently used, but kept from your original)
+
+        // Configure transformers to use local model only
+        env.allowRemoteModels = false;
+        env.localModelPath = '.';
+
+        let classifier = null;  // RoBERTa auto/allo classifier (Xenova)
+        let classifierReady = false;
+
+        /********************************************************************
+         * TEXT FINDER CONFIGURATION
+         ********************************************************************/
         const CORPORA = [
             {
                 id: "derge",
@@ -173,22 +204,33 @@
             }
         ];
 
-        // Will hold all entries from all corpora:
-        // {
-        //   corpusId, corpusLabel, zipUrl,
-        //   path,        // path inside zip, e.g. "D406.txt"
-        //   displayName, // human-readable label; may just be the filename
-        //   index        // stable numeric ID for this entry
-        // }
         const ALL_TEXT_ENTRIES = [];
-
-        // Cache of JSZip instances, one per corpusId.
         const ZIP_CACHE = {};
 
         /********************************************************************
-         * TEXT FINDER: MANIFEST LOADING
+         * AUTO/ALLO MODEL LOADING
          ********************************************************************/
+        async function loadModel() {
+            const modelStatus = document.getElementById("modelStatus");
+            try {
+                modelStatus.textContent = "Model: loading auto/allo classifier...";
+                classifier = await pipeline('text-classification', './model', {
+                    quantized: false,
+                    revision: 'main',
+                    local_files_only: true,
+                });
+                classifierReady = true;
+                modelStatus.textContent = "Model: auto/allo classifier loaded.";
+            } catch (e) {
+                console.error("Error loading classifier model:", e);
+                modelStatus.textContent = "Model: failed to load auto/allo classifier (see console).";
+                classifierReady = false;
+            }
+        }
 
+        /********************************************************************
+         * MANIFEST LOADING (TEXT FINDER)
+         ********************************************************************/
         async function loadManifests() {
             const statusEl = document.getElementById("textSearchStatus");
             try {
@@ -200,8 +242,7 @@
                         continue;
                     }
                     const manifest = await resp.json();
-                    // Expect manifest to be an array of objects like:
-                    // { "file": "D406.txt", "title": "D406 Some Text Name" }
+                    // Expect: [{ "file": "subdir/D406.txt", "title": "D406 Some Title" }, ...]
                     for (const entry of manifest) {
                         const path = entry.file;
                         const title = entry.title || entry.file;
@@ -215,7 +256,6 @@
                         });
                     }
                 }
-
                 if (ALL_TEXT_ENTRIES.length === 0) {
                     statusEl.textContent = "No texts found in manifests (check manifest URLs).";
                 } else {
@@ -228,14 +268,12 @@
         }
 
         /********************************************************************
-         * TEXT FINDER: SEARCH + RENDER
+         * TEXT FINDER SEARCH + RENDER
          ********************************************************************/
-
         function searchTexts(query, limit = 10) {
             if (!query) return [];
             const q = query.toLowerCase();
 
-            // Simple substring search over displayName and path
             const matches = [];
             for (const entry of ALL_TEXT_ENTRIES) {
                 const dname = entry.displayName.toLowerCase();
@@ -244,7 +282,6 @@
                 const idxPath = pth.indexOf(q);
                 if (idxName === -1 && idxPath === -1) continue;
 
-                // Score: prefer matches earlier in the string, prefer shorter names
                 const rawIdx = idxName !== -1 ? idxName : 1000 + idxPath;
                 const score = rawIdx + 0.001 * dname.length;
                 matches.push({ entry, score });
@@ -283,17 +320,14 @@
   </button>
 </div>`;
             }
-
             resultsEl.innerHTML = html;
         }
 
         /********************************************************************
          * TEXT FINDER: ZIP LOADING + TEXT EXTRACTION
          ********************************************************************/
-
         async function getZipForCorpus(corpusId, zipUrl) {
             if (!ZIP_CACHE[corpusId]) {
-                // First time: fetch and load the zip
                 const resp = await fetch(zipUrl);
                 if (!resp.ok) {
                     throw new Error(`Failed to fetch zip for ${corpusId}: ${resp.status}`);
@@ -330,13 +364,77 @@
         }
 
         /********************************************************************
-         * EXISTING QUOTE DETECTOR CODE (UNCHANGED)
+         * HELPER FUNCTIONS (SHARED)
          ********************************************************************/
+        function escapeHtml(str) {
+            return str
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;")
+                .replace(/'/g, "&#39;");
+        }
 
-        const MAX_QUOTE_LENGTH_CHARS = 500;
+        function softmax(arr) {
+            const max = Math.max(...arr);
+            const exps = arr.map(x => Math.exp(x - max));
+            const sum = exps.reduce((a, b) => a + b, 0);
+            return exps.map(x => x / sum);
+        }
 
+        function nextFrame() {
+            return new Promise(resolve => requestAnimationFrame(resolve));
+        }
+
+        // Map auto-probability p (0..1) to red→blue gradient
+        function autoProbToColor(pAuto) {
+            const p = Math.min(1, Math.max(0, pAuto));
+            const r = Math.round(255 * (1 - p));   // 1 -> 0
+            const g = 0;
+            const b = Math.round(255 * p);         // 0 -> 255
+            return `rgb(${r},${g},${b})`;
+        }
+
+        /********************************************************************
+         * AUTO/ALLO CLASSIFICATION PER CLAUSE
+         ********************************************************************/
+        async function classifyClauses(clauses) {
+            const modelStatus = document.getElementById("modelStatus");
+
+            // If classifier isn't ready, just give neutral scores (0.5)
+            if (!classifierReady || !classifier) {
+                return clauses.map(() => ({ allo: 0.5, auto: 0.5 }));
+            }
+
+            const results = [];
+            for (let i = 0; i < clauses.length; i++) {
+                const clause = clauses[i];
+                try {
+                    const tokens = await classifier.tokenizer(clause);
+                    const output = await classifier.model(tokens);
+                    const logits = output.logits.data;
+                    const [allo, auto] = softmax(Array.from(logits)); // assume [allo, auto]
+                    results.push({ allo, auto });
+                } catch (e) {
+                    console.error(`Error classifying clause ${i}:`, e);
+                    results.push({ allo: 0.5, auto: 0.5 });
+                }
+
+                // Occasionally yield to the browser
+                if (i % 10 === 0) {
+                    modelStatus.textContent = `Model: auto/allo classifier loaded. Classifying ${i + 1}/${clauses.length} clauses...`;
+                    await nextFrame();
+                }
+            }
+
+            modelStatus.textContent = `Model: auto/allo classifier loaded. Classified ${clauses.length} clauses.`;
+            return results;
+        }
+
+        /********************************************************************
+         * QUOTE DETECTION LOGIC
+         ********************************************************************/
         function getOpenCloseRegexes(lasnas) {
-
             let potentialOpeners = [
                 "las kyang ji skad du",
                 "las kyang",
@@ -359,7 +457,7 @@
                 "tshigs su bcad pa",
                 "'dir tshigs su bcad pa",
             ];
-            if (lasnas == true) {
+            if (lasnas === true) {
                 potentialOpeners.push("las$");
             } else {
                 potentialOpeners.push("las");
@@ -427,15 +525,6 @@
             return [openerRegex, closerRegex, openerRegexSrc, closerRegexSrc];
         }
 
-        function escapeHtml(str) {
-            return str
-                .replace(/&/g, "&amp;")
-                .replace(/</g, "&lt;")
-                .replace(/>/g, "&gt;")
-                .replace(/"/g, "&quot;")
-                .replace(/'/g, "&#39;");
-        }
-
         function splitClauses(text) {
             const normalized = text.replace(/\r\n?/g, " ").replace(/\n/g, " ");
             return normalized
@@ -445,10 +534,10 @@
         }
 
         function detectQuotes(clauses) {
-            var las_nas_shunit = document.getElementById("lasnas").checked;
+            const las_nas_shunit = document.getElementById("lasnas").checked;
             console.log("las_nas_shunit =", las_nas_shunit);
 
-            const [openerRegex, closerRegex, openerRegexSrc, closerRegexSrc] = getOpenCloseRegexes(las_nas_shunit);
+            const [openerRegex, closerRegex] = getOpenCloseRegexes(las_nas_shunit);
 
             const labels = new Array(clauses.length).fill("none");
             let i = 0;
@@ -491,18 +580,11 @@
             return labels;
         }
 
-        function renderResults(clauses, labels) {
-            var las_nas_shunit = document.getElementById("lasnas").checked;
+        function renderResults(clauses, labels, alloAutoScores) {
+            const las_nas_shunit = document.getElementById("lasnas").checked;
             console.log("las_nas_shunit =", las_nas_shunit);
 
-            const [openerRegex, closerRegex, openerRegexSrc, closerRegexSrc] = getOpenCloseRegexes(las_nas_shunit);
-
-            const colorMap = {
-                opener: "#d0f0fd",
-                inquote: "#fef7cb",
-                closer: "#ffd0d0",
-                none: "white"
-            };
+            const [, , openerRegexSrc, closerRegexSrc] = getOpenCloseRegexes(las_nas_shunit);
 
             let html = "";
 
@@ -522,6 +604,14 @@
                 const label = labels[i];
                 const idxStr = i.toString().padStart(4, "0");
                 const clauseEsc = escapeHtml(clause);
+
+                // --- auto/allo badge ---
+                const score = alloAutoScores && alloAutoScores[i] ? alloAutoScores[i] : { allo: 0.5, auto: 0.5 };
+                const pAuto = score.auto;
+                const color = autoProbToColor(pAuto);
+                const badgeText = pAuto.toFixed(2);
+                const titleText = `Allo: ${score.allo.toFixed(2)}, Auto: ${score.auto.toFixed(2)}`;
+                const badgeHtml = `<span class="allo-auto-badge" style="background-color:${color};" title="${escapeHtml(titleText)}">${badgeText}</span>`;
 
                 let highlighted = clauseEsc;
 
@@ -555,7 +645,7 @@
                     highlighted = `<span class="inquote">${clauseEsc}</span>`;
                 }
 
-                html += `<div id="line-${idxStr}" class="clause-line"><strong>${idxStr}:</strong> ${highlighted}</div>`;
+                html += `<div id="line-${idxStr}" class="clause-line">${badgeHtml}<strong>${idxStr}:</strong> ${highlighted}</div>`;
             }
 
             return html;
@@ -564,9 +654,8 @@
         /********************************************************************
          * WIRE UP UI
          ********************************************************************/
-
-        // Quote detector button
-        document.getElementById("runBtn").addEventListener("click", () => {
+        // Quote detector button (now async because of classifier)
+        document.getElementById("runBtn").addEventListener("click", async () => {
             const input = document.getElementById("inputText").value || "";
             const resultsDiv = document.getElementById("results");
 
@@ -576,8 +665,10 @@
                 return;
             }
 
+            // classify clauses as allo/auto
+            const alloAutoScores = await classifyClauses(clauses);
             const labels = detectQuotes(clauses);
-            const html = renderResults(clauses, labels);
+            const html = renderResults(clauses, labels, alloAutoScores);
             resultsDiv.innerHTML = html;
         });
 
@@ -598,7 +689,7 @@
             const btn = e.target.closest("button[data-entry-index]");
             if (!btn) return;
             const idx = parseInt(btn.getAttribute("data-entry-index"), 10);
-            const entry = ALL_TEXT_ENTRIES.find(e => e.index === idx);
+            const entry = ALL_TEXT_ENTRIES.find(ent => ent.index === idx);
             if (!entry) {
                 alert("Could not find selected entry (internal error).");
                 return;
@@ -606,9 +697,10 @@
             loadTextEntryIntoTextarea(entry);
         });
 
-        // Kick off manifest loading after page is ready
+        // Kick off manifest + model loading after page is ready
         window.addEventListener("load", () => {
             loadManifests();
+            loadModel();
         });
     </script>
 </body>
