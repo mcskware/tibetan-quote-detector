@@ -36,9 +36,16 @@
 
         .heatbox {
             width: 10px;
-            height: 10px;
+            height: 36px;              /* a bit taller for 3 bands */
             margin: 1px;
             border: 1px solid #ccc;
+            display: flex;
+            flex-direction: column;    /* vertical bands */
+            overflow: hidden;
+        }
+
+        .heatband {
+            flex: 1 1 auto;
         }
 
         .opener {
@@ -162,6 +169,14 @@
     <br>
     <button id="runBtn">Detect quotes</button>
 
+    <div id="heatmapControls" style="margin-top: 0.75rem; font-size: 0.9rem;">
+        Heatmap layers:
+        <label><input type="checkbox" id="showQuotesHeat" checked> Quotes</label>
+        <label><input type="checkbox" id="showAlloHeat" checked> Allo/auto</label>
+        <label><input type="checkbox" id="showVerseHeat" checked> Verse</label>
+    </div>
+
+
     <div id="results" style="margin-top: 1.5rem;"></div>
 
     <!-- JSZip for reading zip archives in the browser -->
@@ -170,6 +185,13 @@
     <!-- Main logic: text finder + quote detector + allo/allo classifier -->
     <script type="module">
         import { env, pipeline } from 'https://cdn.jsdelivr.net/npm/@xenova/transformers@2.4.1';
+
+        // Cache of last run so we can re-render heatmap without recomputing
+        let LAST_CLAUSES = null;
+        let LAST_LABELS = null;
+        let LAST_ALLOAUTO = null;
+        let LAST_VERSE = null;
+
 
         /********************************************************************
          * GLOBAL CONFIGS
@@ -656,20 +678,52 @@
         }
 
         function renderResults(clauses, labels, alloAutoScores, verseFlags) {
-            const las_nas_shunit = document.getElementById("lasnas").checked;
+        const las_nas_shunit = document.getElementById("lasnas").checked;
             console.log("las_nas_shunit =", las_nas_shunit);
 
             const [, , openerRegexSrc, closerRegexSrc] = getOpenCloseRegexes(las_nas_shunit);
 
-            let html = "";
+            // Read heatmap toggles
+            const showQuotes = document.getElementById("showQuotesHeat")?.checked ?? true;
+            const showAllo   = document.getElementById("showAlloHeat")?.checked ?? true;
+            const showVerse  = document.getElementById("showVerseHeat")?.checked ?? true;
+            const neutralColor = "#f5f5f5";
 
-            html += "<h2>Quote Detection Heatmap</h2>";
+            const quoteColorMap = {
+                opener: "#d0f0fd",
+                inquote: "#fef7cb",
+                closer: "#ffd0d0",
+                none: "#ffffff"
+            };
+
+            let html = "";
+            html += "<h2>Heatmap</h2>";
             html += "<div class='heatmap'>";
 
             for (let i = 0; i < labels.length; i++) {
                 const lbl = labels[i];
                 const idxStr = i.toString().padStart(4, "0");
-                html += `<a href="#line-${idxStr}"><div class="heatbox ${lbl}"></div></a>`;
+                const score = alloAutoScores && alloAutoScores[i] ? alloAutoScores[i] : { allo: 0.5, auto: 0.5 };
+                const pAuto = score.auto;
+                const verse = verseFlags && verseFlags[i];
+
+                const quoteColor = showQuotes ? (quoteColorMap[lbl] || "#ffffff") : neutralColor;
+                const alloColor  = showAllo   ? autoProbToColor(pAuto)             : neutralColor;
+                const verseColor = showVerse  ? (verse ? "#4caf50" : "#dddddd")    : neutralColor;
+
+                const title = `Line ${idxStr}
+Quote: ${lbl}
+Allo: ${score.allo.toFixed(2)}, Auto: ${score.auto.toFixed(2)}
+Verse: ${verse ? "yes" : "no"}`;
+
+                html += `
+<a href="#line-${idxStr}" title="${escapeHtml(title)}">
+<div class="heatbox">
+    <div class="heatband" style="background:${quoteColor};"></div>
+    <div class="heatband" style="background:${alloColor};"></div>
+    <div class="heatband" style="background:${verseColor};"></div>
+</div>
+</a>`;
             }
 
             html += "</div><hr>";
@@ -747,12 +801,16 @@
                 return;
             }
 
-            // Verse detection (sync, cheap)
             const verseFlags = detectVerseLines(clauses);
-
-            // classify clauses as allo/auto (async)
             const alloAutoScores = await classifyClauses(clauses);
             const labels = detectQuotes(clauses);
+
+            // cache
+            LAST_CLAUSES = clauses;
+            LAST_LABELS = labels;
+            LAST_ALLOAUTO = alloAutoScores;
+            LAST_VERSE = verseFlags;
+
             const html = renderResults(clauses, labels, alloAutoScores, verseFlags);
             resultsDiv.innerHTML = html;
         });
@@ -787,6 +845,21 @@
             loadManifests();
             loadModel();
         });
+    
+        function rerenderWithCurrentHeatmap() {
+            if (!LAST_CLAUSES) return;
+            const resultsDiv = document.getElementById("results");
+            const html = renderResults(LAST_CLAUSES, LAST_LABELS, LAST_ALLOAUTO, LAST_VERSE);
+            resultsDiv.innerHTML = html;
+        }
+
+        ["showQuotesHeat", "showAlloHeat", "showVerseHeat"].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) {
+                el.addEventListener("change", rerenderWithCurrentHeatmap);
+            }
+        });
+
     </script>
 
 </body>
