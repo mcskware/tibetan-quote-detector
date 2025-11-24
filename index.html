@@ -623,9 +623,22 @@
         }
 
         function splitClauses(text) {
-            const normalized = text.replace(/\r\n?/g, " ").replace(/\n/g, " ");
-            return normalized
-                .split(/\s*\/{1,2}\s*/u)
+            // Keep this: normalize CRLF / CR to a space (some input needs this).
+            const normalized = text.replace(/\r\n?/g, " ");
+
+            // Replace any group of one or more slashes, possibly separated by spaces,
+            // with the same group plus a newline.
+            //
+            // Examples:
+            //   " / "        -> " / \n"
+            //   " / / //  "  -> " / / // \n"
+            //
+            const withNewlines = normalized.replace(/((?:\s*\/)+)\s*/gu, "$1\n");
+
+            // Now split on the newlines we just introduced.
+            // We trim spaces but *do not* remove the tshads themselves.
+            return withNewlines
+                .split("\n")
                 .map(c => c.trim())
                 .filter(c => c.length > 0);
         }
