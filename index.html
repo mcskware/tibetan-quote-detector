@@ -64,6 +64,14 @@
             background-color: white;
         }
 
+        .meta-unselectable {
+            user-select: none;
+            -webkit-user-select: none;  /* Safari */
+            -moz-user-select: none;     /* Firefox */
+            -ms-user-select: none;      /* old Edge/IE */
+        }
+
+
         span.opener,
         span.inquote,
         span.closer {
@@ -794,7 +802,15 @@ Verse: ${verse ? "yes" : "no"}`;
                     finalText = `<span class="verse-line">${highlighted}</span>`;
                 }
 
-                html += `<div id="line-${idxStr}" class="clause-line">${badgeHtml}<strong>${idxStr}:</strong> ${finalText}</div>`;
+                // html += `<div id="line-${idxStr}" class="clause-line">${badgeHtml}<strong>${idxStr}:</strong> ${finalText}</div>`;
+                html += `
+  <div id="line-${idxStr}" class="clause-line">
+    <span class="meta-unselectable">
+      ${badgeHtml}<strong>${idxStr}:</strong>&nbsp;
+    </span>
+    ${finalText}
+  </div>`;
+
             }
 
             return html;
