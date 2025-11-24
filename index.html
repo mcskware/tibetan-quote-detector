@@ -241,6 +241,47 @@
         const ALL_TEXT_ENTRIES = [];
         const ZIP_CACHE = {};
 
+        function setupResultsCopyHandler() {
+            const resultsDiv = document.getElementById("results");
+            if (!resultsDiv) return;
+
+            resultsDiv.addEventListener("copy", (event) => {
+                const selection = window.getSelection();
+                if (!selection) return;
+
+                const selectedText = selection.toString();
+                if (!selectedText) return;
+
+                // Only intercept if the selection is inside #results
+                const anchorNode = selection.anchorNode;
+                const focusNode = selection.focusNode;
+                const containsAnchor = anchorNode && resultsDiv.contains(anchorNode);
+                const containsFocus = focusNode && resultsDiv.contains(focusNode);
+
+                if (!containsAnchor && !containsFocus) {
+                    // Let normal copying happen elsewhere (e.g., textarea)
+                    return;
+                }
+
+                // --- Transform the text ---
+                let text = selectedText;
+
+                // Normalize CRLF/CR to LF
+                text = text.replace(/\r\n?/g, "\n");
+
+                // Replace all newlines with spaces
+                text = text.replace(/\n+/g, " ");
+
+                // Collapse multiple spaces to a single space and trim
+                text = text.replace(/\s+/g, " ").trim();
+
+                // Put our cleaned text into the clipboard
+                event.preventDefault();
+                event.clipboardData.setData("text/plain", text);
+            });
+        }
+
+
         /********************************************************************
          * AUTO/ALLO MODEL LOADING
          ********************************************************************/
@@ -873,6 +914,7 @@ Verse: ${verse ? "yes" : "no"}`;
         window.addEventListener("load", () => {
             loadManifests();
             loadModel();
+            setupResultsCopyHandler();
         });
     
         function rerenderWithCurrentHeatmap() {
