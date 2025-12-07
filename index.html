@@ -142,6 +142,124 @@
         .verse-line {
             font-weight: bold;
         }
+
+        /* Corpus search panel styles */
+        .corpus-search-panel {
+            position: fixed !important;
+            bottom: 0 !important;
+            right: 0 !important;
+            width: 400px;
+            max-height: 80vh;
+            background: white;
+            border: 2px solid #333;
+            border-bottom: none;
+            border-right: none;
+            box-shadow: -2px -2px 10px rgba(0,0,0,0.3);
+            display: flex;
+            flex-direction: column;
+            z-index: 9999 !important;
+            pointer-events: auto;
+        }
+
+        .corpus-search-header {
+            background: #333;
+            color: white;
+            padding: 0.5rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .corpus-search-header:hover {
+            background: #444;
+        }
+
+        .corpus-search-body {
+            padding: 0.5rem;
+            overflow-y: auto;
+            flex: 1;
+        }
+
+        .corpus-search-body.collapsed {
+            display: none;
+        }
+
+        .corpus-search-input-group {
+            margin-bottom: 0.5rem;
+        }
+
+        .corpus-search-input-group textarea {
+            width: 100%;
+            box-sizing: border-box;
+            font-family: monospace;
+            resize: vertical;
+            min-height: 60px;
+        }
+
+        .corpus-search-controls {
+            display: flex;
+            gap: 0.5rem;
+            align-items: center;
+            margin-bottom: 0.5rem;
+        }
+
+        .corpus-search-status {
+            font-size: 0.8rem;
+            color: #555;
+            margin-bottom: 0.5rem;
+        }
+
+        .corpus-search-progress {
+            width: 100%;
+            height: 20px;
+            margin-bottom: 0.5rem;
+            display: none;
+        }
+
+        .corpus-search-results {
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        .corpus-search-result-item {
+            border: 1px solid #ddd;
+            padding: 0.5rem;
+            margin-bottom: 0.5rem;
+            font-size: 0.85rem;
+            background: #f9f9f9;
+        }
+
+        .corpus-search-result-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 0.25rem;
+        }
+
+        .corpus-search-result-title {
+            font-weight: bold;
+            color: #333;
+        }
+
+        .corpus-search-result-context {
+            font-family: monospace;
+            background: white;
+            padding: 0.25rem;
+            border-left: 3px solid #333;
+            margin: 0.25rem 0;
+        }
+
+        .corpus-search-result-match {
+            background-color: #fef7cb;
+            font-weight: bold;
+        }
+
+        .corpus-search-result-meta {
+            font-size: 0.75rem;
+            color: #666;
+        }
     </style>
 </head>
 
@@ -187,8 +305,39 @@
 
     <div id="results" style="margin-top: 1.5rem;"></div>
 
+    <!-- Corpus Search Panel -->
+    <div class="corpus-search-panel" id="corpusSearchPanel">
+        <div class="corpus-search-header" id="corpusSearchHeader">
+            <strong>Corpus Search</strong>
+            <span id="corpusSearchToggle">▼</span>
+        </div>
+        <div class="corpus-search-body" id="corpusSearchBody">
+            <div class="corpus-search-input-group">
+                <label for="corpusSearchInput" style="display: block; margin-bottom: 0.25rem; font-weight: bold;">Search Query:</label>
+                <textarea id="corpusSearchInput" placeholder="Enter Tibetan text to search..."></textarea>
+            </div>
+            <div class="corpus-search-controls">
+                <button id="corpusSearchBtn">Search</button>
+                <label style="font-size: 0.85rem;">
+                    <input type="checkbox" id="corpusSearchFuzzy" checked>
+                    Fuzzy
+                </label>
+            </div>
+            <div class="corpus-search-controls">
+                <button id="corpusSearchFillSelection" style="font-size: 0.85rem;">Fill from Selection</button>
+                <button id="corpusSearchPreload" style="font-size: 0.85rem;">Preload Index</button>
+            </div>
+            <progress id="corpusSearchProgress" class="corpus-search-progress" value="0" max="100"></progress>
+            <div class="corpus-search-status" id="corpusSearchStatus">Ready to search</div>
+            <div class="corpus-search-results" id="corpusSearchResults"></div>
+        </div>
+    </div>
+
     <!-- JSZip for reading zip archives in the browser -->
     <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+
+    <!-- Fuse.js for fuzzy searching -->
+    <script src="https://cdn.jsdelivr.net/npm/fuse.js@7.0.0/dist/fuse.min.js"></script>
 
     <!-- Main logic: text finder + quote detector + allo/allo classifier -->
     <script type="module">
@@ -240,6 +389,19 @@
 
         const ALL_TEXT_ENTRIES = [];
         const ZIP_CACHE = {};
+
+        /********************************************************************
+         * CORPUS SEARCH CONFIGURATION
+         ********************************************************************/
+        const CORPUS_INDEX = {
+            loaded: false,
+            loading: false,
+            documents: [],  // Array of { id, corpusId, corpusLabel, path, displayName, preview, lines, fullLength }
+            fuse: null
+        };
+        const SEARCH_INDEX_URL = "zips/search_index.json.gz";
+        const SEARCH_CONTEXT_LINES = 2;  // Lines before and after match
+        const MAX_SEARCH_RESULTS = 100;
 
         function setupResultsCopyHandler() {
             const resultsDiv = document.getElementById("results");
@@ -436,6 +598,220 @@
                 alert("Failed to load text from zip (see console).");
                 statusEl.textContent = "Error loading text.";
             }
+        }
+
+        /********************************************************************
+         * CORPUS SEARCH: LOAD PRE-BUILT INDEX
+         ********************************************************************/
+        async function loadSearchIndex() {
+            const statusEl = document.getElementById("corpusSearchStatus");
+            const progressEl = document.getElementById("corpusSearchProgress");
+
+            if (CORPUS_INDEX.loaded) {
+                statusEl.textContent = `Index ready: ${CORPUS_INDEX.documents.length} documents`;
+                return;
+            }
+
+            if (CORPUS_INDEX.loading) {
+                statusEl.textContent = 'Index is already loading...';
+                return;
+            }
+
+            try {
+                CORPUS_INDEX.loading = true;
+                progressEl.style.display = 'block';
+                progressEl.removeAttribute('value'); // Indeterminate progress
+                statusEl.textContent = 'Loading search index...';
+
+                const response = await fetch(SEARCH_INDEX_URL);
+                if (!response.ok) {
+                    throw new Error(`Failed to load search index: ${response.status}`);
+                }
+
+                // Get the gzipped data as a blob
+                const blob = await response.blob();
+                statusEl.textContent = `Decompressing search index (${(blob.size / (1024 * 1024)).toFixed(1)} MB)...`;
+
+                // Decompress using browser's native decompression
+                const decompressedStream = blob.stream().pipeThrough(new DecompressionStream('gzip'));
+                const decompressedBlob = await new Response(decompressedStream).blob();
+                const jsonText = await decompressedBlob.text();
+
+                statusEl.textContent = 'Parsing search index...';
+                const indexData = JSON.parse(jsonText);
+
+                CORPUS_INDEX.documents = indexData.documents;
+
+                // Build Fuse.js index
+                statusEl.textContent = 'Building fuzzy search index...';
+                await nextFrame();
+
+                CORPUS_INDEX.fuse = new Fuse(CORPUS_INDEX.documents, {
+                    keys: ['preview'],  // Changed from 'content' to 'preview'
+                    includeScore: true,
+                    includeMatches: true,
+                    threshold: 0.3,
+                    ignoreLocation: true,
+                    minMatchCharLength: 2
+                });
+
+                CORPUS_INDEX.loaded = true;
+                CORPUS_INDEX.loading = false;
+                progressEl.style.display = 'none';
+                statusEl.textContent = `Index ready: ${CORPUS_INDEX.documents.length} documents`;
+            } catch (err) {
+                console.error('Error loading search index:', err);
+                statusEl.textContent = `Error loading index: ${err.message}`;
+                progressEl.style.display = 'none';
+                CORPUS_INDEX.loading = false;
+            }
+        }
+
+        /********************************************************************
+         * CORPUS SEARCH: SEARCH FUNCTIONALITY
+         ********************************************************************/
+        async function performCorpusSearch(query, useFuzzy = true) {
+            const statusEl = document.getElementById("corpusSearchStatus");
+            const resultsEl = document.getElementById("corpusSearchResults");
+
+            if (!query || query.trim().length === 0) {
+                statusEl.textContent = 'Please enter a search query';
+                resultsEl.innerHTML = '';
+                return;
+            }
+
+            // Ensure index is loaded
+            if (!CORPUS_INDEX.loaded) {
+                await loadSearchIndex();
+                if (!CORPUS_INDEX.loaded) {
+                    return; // Loading failed
+                }
+            }
+
+            statusEl.textContent = 'Searching...';
+            const searchQuery = query.trim();
+            let results = [];
+
+            if (useFuzzy && CORPUS_INDEX.fuse) {
+                // Fuzzy search with Fuse.js
+                const fuseResults = CORPUS_INDEX.fuse.search(searchQuery, { limit: MAX_SEARCH_RESULTS });
+                results = fuseResults.map(r => ({
+                    document: r.item,
+                    score: r.score,
+                    matches: r.matches
+                }));
+            } else {
+                // Exact search (search in preview only)
+                for (const doc of CORPUS_INDEX.documents) {
+                    if (doc.preview.includes(searchQuery)) {
+                        results.push({
+                            document: doc,
+                            score: 0,
+                            matches: null
+                        });
+                        if (results.length >= MAX_SEARCH_RESULTS) break;
+                    }
+                }
+            }
+
+            renderCorpusSearchResults(results, searchQuery);
+            statusEl.textContent = `Found ${results.length} result${results.length !== 1 ? 's' : ''}`;
+        }
+
+        function renderCorpusSearchResults(results, query) {
+            const resultsEl = document.getElementById("corpusSearchResults");
+
+            if (results.length === 0) {
+                resultsEl.innerHTML = '<p style="color: #666; font-style: italic;">No results found.</p>';
+                return;
+            }
+
+            let html = '';
+            for (const result of results) {
+                const doc = result.document;
+                const safeTitle = escapeHtml(doc.displayName);
+                const safeCorpus = escapeHtml(doc.corpusLabel);
+                const safePath = escapeHtml(doc.path);
+
+                // Find matching lines with context
+                const matchingLines = findMatchingLines(doc, query);
+
+                html += `
+<div class="corpus-search-result-item">
+    <div class="corpus-search-result-header">
+        <div>
+            <div class="corpus-search-result-title">${safeTitle}</div>
+            <div class="corpus-search-result-meta">[${safeCorpus}] ${safePath}</div>
+        </div>
+        <button type="button" data-doc-id="${doc.id}">Load</button>
+    </div>`;
+
+                // Show up to 3 matching contexts
+                const contextsToShow = matchingLines.slice(0, 3);
+                for (const ctx of contextsToShow) {
+                    html += `<div class="corpus-search-result-context">${ctx}</div>`;
+                }
+
+                if (matchingLines.length > 3) {
+                    html += `<div class="corpus-search-result-meta">...and ${matchingLines.length - 3} more match(es) in preview</div>`;
+                }
+
+                // Note if document is longer than preview
+                if (doc.preview.length < doc.fullLength) {
+                    html += `<div class="corpus-search-result-meta" style="font-style: italic;">Note: Only first ~2000 chars searched. Load full text to see all matches.</div>`;
+                }
+
+                html += '</div>';
+            }
+
+            resultsEl.innerHTML = html;
+        }
+
+        function findMatchingLines(doc, query) {
+            const lines = doc.lines;
+            const matchingContexts = [];
+            const queryLower = query.toLowerCase();
+
+            for (let i = 0; i < lines.length; i++) {
+                const line = lines[i];
+                const lineLower = line.toLowerCase();
+
+                if (lineLower.includes(queryLower)) {
+                    // Get context lines
+                    const startIdx = Math.max(0, i - SEARCH_CONTEXT_LINES);
+                    const endIdx = Math.min(lines.length - 1, i + SEARCH_CONTEXT_LINES);
+
+                    let contextHtml = '';
+                    for (let j = startIdx; j <= endIdx; j++) {
+                        const contextLine = lines[j];
+
+                        if (j === i) {
+                            // Highlight the matching line
+                            const highlighted = highlightMatches(contextLine, query);
+                            contextHtml += highlighted;
+                        } else {
+                            contextHtml += escapeHtml(contextLine);
+                        }
+
+                        if (j < endIdx) {
+                            contextHtml += ' ';
+                        }
+                    }
+
+                    matchingContexts.push(contextHtml);
+                }
+            }
+
+            return matchingContexts;
+        }
+
+        function highlightMatches(text, query) {
+            const escapedText = escapeHtml(text);
+            const escapedQuery = escapeHtml(query);
+
+            // Case-insensitive replace
+            const regex = new RegExp(escapedQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
+            return escapedText.replace(regex, match => `<span class="corpus-search-result-match">${match}</span>`);
         }
 
         /********************************************************************
@@ -908,6 +1284,80 @@ Verse: ${verse ? "yes" : "no"}`;
                 return;
             }
             loadTextEntryIntoTextarea(entry);
+        });
+
+        /********************************************************************
+         * CORPUS SEARCH: UI EVENT HANDLERS
+         ********************************************************************/
+        // Toggle corpus search panel
+        document.getElementById("corpusSearchHeader").addEventListener("click", () => {
+            const body = document.getElementById("corpusSearchBody");
+            const toggle = document.getElementById("corpusSearchToggle");
+
+            if (body.classList.contains("collapsed")) {
+                body.classList.remove("collapsed");
+                toggle.textContent = "▼";
+            } else {
+                body.classList.add("collapsed");
+                toggle.textContent = "▲";
+            }
+        });
+
+        // Fill search input from selection
+        document.getElementById("corpusSearchFillSelection").addEventListener("click", () => {
+            const selection = window.getSelection();
+            const selectedText = selection ? selection.toString().trim() : '';
+
+            if (selectedText) {
+                // Clean up the selected text (remove line numbers, etc.)
+                let cleanText = selectedText;
+                // Remove line number prefixes like "0042: "
+                cleanText = cleanText.replace(/^\d+:\s*/gm, '');
+                // Normalize whitespace
+                cleanText = cleanText.replace(/\s+/g, ' ').trim();
+
+                document.getElementById("corpusSearchInput").value = cleanText;
+            } else {
+                alert('Please select some text first');
+            }
+        });
+
+        // Perform search
+        document.getElementById("corpusSearchBtn").addEventListener("click", async () => {
+            const query = document.getElementById("corpusSearchInput").value;
+            const useFuzzy = document.getElementById("corpusSearchFuzzy").checked;
+            await performCorpusSearch(query, useFuzzy);
+        });
+
+        // Preload index
+        document.getElementById("corpusSearchPreload").addEventListener("click", async () => {
+            await loadSearchIndex();
+        });
+
+        // Allow Enter key in search input to trigger search
+        document.getElementById("corpusSearchInput").addEventListener("keydown", async (e) => {
+            if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+                e.preventDefault();
+                const query = document.getElementById("corpusSearchInput").value;
+                const useFuzzy = document.getElementById("corpusSearchFuzzy").checked;
+                await performCorpusSearch(query, useFuzzy);
+            }
+        });
+
+        // Load text from corpus search results
+        document.getElementById("corpusSearchResults").addEventListener("click", async (e) => {
+            const btn = e.target.closest("button[data-doc-id]");
+            if (!btn) return;
+
+            const docId = parseInt(btn.getAttribute("data-doc-id"), 10);
+            const entry = ALL_TEXT_ENTRIES.find(ent => ent.index === docId);
+
+            if (!entry) {
+                alert("Could not find selected text (internal error).");
+                return;
+            }
+
+            await loadTextEntryIntoTextarea(entry);
         });
 
         // Kick off manifest + model loading after page is ready
