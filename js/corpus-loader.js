@@ -170,10 +170,11 @@ export async function getZipForCorpus(corpusId, zipUrl) {
 }
 
 /**
- * Load a text entry into the textarea
+ * Load a text entry and optionally process it
  * @param {Object} entry - Text entry to load
+ * @param {Function} onLoadCallback - Optional callback function to call with loaded text
  */
-export async function loadTextEntryIntoTextarea(entry) {
+export async function loadTextEntry(entry, onLoadCallback = null) {
     const statusEl = document.getElementById("textSearchStatus");
     try {
         statusEl.textContent = `Loading ${entry.displayName} from ${entry.corpusLabel}...`;
@@ -183,17 +184,35 @@ export async function loadTextEntryIntoTextarea(entry) {
         if (!file) {
             alert(`Could not find file "${entry.path}" in ${entry.corpusLabel} zip.`);
             statusEl.textContent = "File not found in zip.";
-            return;
+            return null;
         }
 
         const text = await file.async("string");
-        const textarea = document.getElementById("inputText");
-        textarea.value = text;
-        statusEl.textContent = `Loaded ${entry.displayName} into the detector.`;
-        textarea.focus();
+        statusEl.textContent = `Loaded ${entry.displayName}.`;
+
+        // Call the callback if provided (for auto-processing)
+        if (onLoadCallback) {
+            onLoadCallback(text, entry);
+        }
+
+        return text;
     } catch (err) {
         console.error("Error loading text from zip:", err);
         alert("Failed to load text from zip (see console).");
         statusEl.textContent = "Error loading text.";
+        return null;
+    }
+}
+
+/**
+ * Load a text entry into the textarea (legacy function for backwards compatibility)
+ * @param {Object} entry - Text entry to load
+ */
+export async function loadTextEntryIntoTextarea(entry) {
+    const text = await loadTextEntry(entry);
+    if (text) {
+        const textarea = document.getElementById("inputText");
+        textarea.value = text;
+        textarea.focus();
     }
 }

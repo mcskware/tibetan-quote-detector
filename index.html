@@ -15,10 +15,9 @@
 
     <!-- TEXT FINDER UI -->
     <div class="text-finder">
-        <strong>Find a text from Derge / Nyingma / ACIP Sungbum</strong>
+        <strong>Find a text from Derge / Lhasa / Lithang / Nyingma / ACIP Sungbum</strong>
         <p style="margin-top:0.25rem;">
-            Start typing part of the text name or filename (e.g. <code>D406</code>), then click a match to load it into
-            the detector.
+            Start typing part of the text name or filename (e.g. <code>D406</code>), then click a match to analyze it.
         </p>
         <input type="text" id="textSearchInput" placeholder="Type part of a text name or filename...">
         <div id="textSearchStatus" style="margin-top:0.25rem; font-size:0.8rem; color:#555;">
@@ -27,27 +26,46 @@
         <div id="textSearchResults" class="text-finder-results"></div>
     </div>
 
-    <p>
-        Paste your Tibetan text below (clauses separated by <code>/</code> or <code>//</code>),
-        then click <strong>Detect quotes</strong>.
-    </p>
-
-    <textarea id="inputText" rows="10" placeholder="Paste Tibetan text here..."></textarea>
-    <br>
-    <input type="checkbox" id="lasnas" name="lasnas" value="lasnas" checked="true">
-    <label for="lasnas"> Restrict las and nas to end-of-shunit</label><br>
-    <br>
-    <button id="runBtn">Detect quotes</button>
-
-    <div id="heatmapControls" style="margin-top: 0.75rem; font-size: 0.9rem;">
-        Heatmap layers:
-        <label><input type="checkbox" id="showQuotesHeat" checked> Quotes</label>
-        <label><input type="checkbox" id="showAlloHeat" checked> Allo/auto</label>
-        <label><input type="checkbox" id="showVerseHeat" checked> Verse</label>
+    <!-- MANUAL INPUT SECTION (Collapsible) -->
+    <div class="manual-input-section">
+        <button class="manual-input-toggle" id="manualInputToggle">
+            Paste Your Own Text ▼
+        </button>
+        <div class="manual-input-body collapsed" id="manualInputBody">
+            <p style="margin-top:0.5rem;">
+                Paste your Tibetan text below (clauses separated by <code>/</code> or <code>//</code>),
+                then click <strong>Analyze Text</strong>.
+            </p>
+            <textarea id="inputText" rows="10" placeholder="Paste Tibetan text here..."></textarea>
+            <br>
+            <button id="runBtn">Analyze Text</button>
+        </div>
     </div>
 
+    <!-- ANALYSIS OPTIONS -->
+    <div class="analysis-options">
+        <input type="checkbox" id="lasnas" name="lasnas" value="lasnas" checked="true">
+        <label for="lasnas"> Restrict las and nas to end-of-shunit</label>
+    </div>
 
-    <div id="results" style="margin-top: 1.5rem;"></div>
+    <!-- RESULTS CONTROLS (only visible after analysis) -->
+    <div id="resultsControls" class="results-controls" style="display: none;">
+        <div class="heatmap-controls">
+            <strong>Heatmap layers:</strong>
+            <label><input type="checkbox" id="showQuotesHeat" checked> Quotes</label>
+            <label><input type="checkbox" id="showVerseHeat" checked> Verse</label>
+            <label><input type="checkbox" id="showAlloHeat"> Allo/auto</label>
+        </div>
+        <div class="allo-auto-controls">
+            <button id="runAlloAutoBtn" class="allo-auto-button">Run Allo/Auto Classification</button>
+            <span id="alloAutoStatus" class="allo-auto-status"></span>
+        </div>
+    </div>
+
+    <!-- RESULTS AREA -->
+    <div id="results" style="margin-top: 1.5rem;">
+        <p style="color: #666; font-style: italic;">Select a text from above or paste your own to begin analysis.</p>
+    </div>
 
     <!-- JSZip for reading zip archives in the browser -->
     <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>

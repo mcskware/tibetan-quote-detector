@@ -11,7 +11,7 @@ import { renderResults } from './results-renderer.js';
 import {
     searchTexts,
     renderSearchResults,
-    loadTextEntryIntoTextarea,
+    loadTextEntry,
     getAllTextEntries
 } from './corpus-loader.js';
 import {
@@ -24,50 +24,88 @@ let LAST_CLAUSES = null;
 let LAST_LABELS = null;
 let LAST_ALLOAUTO = null;
 let LAST_VERSE = null;
+let CURRENT_TEXT_METADATA = null;  // Store info about currently loaded text
 
 /**
  * Initialize all UI event handlers
  */
 export function initializeUIHandlers() {
-    setupQuoteDetectionButton();
+    setupManualInputToggle();
+    setupAnalyzeButton();
     setupTextFinderHandlers();
     setupCorpusSearchHandlers();
     setupHeatmapToggleHandlers();
+    setupAlloAutoHandlers();
 }
 
 /**
- * Setup quote detection button handler
+ * Setup manual input section toggle
  */
-function setupQuoteDetectionButton() {
+function setupManualInputToggle() {
+    document.getElementById("manualInputToggle").addEventListener("click", () => {
+        const body = document.getElementById("manualInputBody");
+        const toggle = document.getElementById("manualInputToggle");
+
+        if (body.classList.contains("collapsed")) {
+            body.classList.remove("collapsed");
+            toggle.textContent = "Paste Your Own Text ▲";
+        } else {
+            body.classList.add("collapsed");
+            toggle.textContent = "Paste Your Own Text ▼";
+        }
+    });
+}
+
+/**
+ * Analyze text (verse + quote detection only, no allo/auto)
+ * @param {string} text - Text to analyze
+ * @param {Object} metadata - Optional metadata about the text source
+ */
+async function analyzeText(text, metadata = null) {
+    const resultsDiv = document.getElementById("results");
+    const resultsControls = document.getElementById("resultsControls");
+
+    const clauses = splitClauses(text);
+    if (clauses.length === 0) {
+        resultsDiv.innerHTML = "<p><em>No clauses found. Did you paste any text?</em></p>";
+        resultsControls.style.display = "none";
+        return;
+    }
+
+    // Show analyzing status
+    resultsDiv.innerHTML = "<p><em>Analyzing text...</em></p>";
+
+    const lasnas = document.getElementById("lasnas").checked;
+    const verseFlags = detectVerseLines(clauses);
+    const labels = detectQuotes(clauses, lasnas);
+
+    // Cache results (without allo/auto initially)
+    LAST_CLAUSES = clauses;
+    LAST_LABELS = labels;
+    LAST_ALLOAUTO = null;  // Reset allo/auto scores
+    LAST_VERSE = verseFlags;
+    CURRENT_TEXT_METADATA = metadata;
+
+    // Render without allo/auto
+    const html = renderResults(clauses, labels, null, verseFlags, lasnas);
+    resultsDiv.innerHTML = html;
+
+    // Show results controls
+    resultsControls.style.display = "block";
+
+    // Reset allo/auto checkbox and button
+    document.getElementById("showAlloHeat").checked = false;
+    document.getElementById("runAlloAutoBtn").disabled = false;
+    document.getElementById("alloAutoStatus").textContent = "";
+}
+
+/**
+ * Setup analyze button for manual input
+ */
+function setupAnalyzeButton() {
     document.getElementById("runBtn").addEventListener("click", async () => {
         const input = document.getElementById("inputText").value || "";
-        const resultsDiv = document.getElementById("results");
-
-        const clauses = splitClauses(input);
-        if (clauses.length === 0) {
-            resultsDiv.innerHTML = "<p><em>No clauses found. Did you paste any text?</em></p>";
-            return;
-        }
-
-        const lasnas = document.getElementById("lasnas").checked;
-        const verseFlags = detectVerseLines(clauses);
-
-        const modelStatus = document.getElementById("modelStatus");
-        const alloAutoScores = await classifyClauses(
-            clauses,
-            (status) => { modelStatus.textContent = status; }
-        );
-
-        const labels = detectQuotes(clauses, lasnas);
-
-        // cache
-        LAST_CLAUSES = clauses;
-        LAST_LABELS = labels;
-        LAST_ALLOAUTO = alloAutoScores;
-        LAST_VERSE = verseFlags;
-
-        const html = renderResults(clauses, labels, alloAutoScores, verseFlags, lasnas);
-        resultsDiv.innerHTML = html;
+        await analyzeText(input, { source: 'manual' });
     });
 }
 
@@ -88,7 +126,7 @@ function setupTextFinderHandlers() {
     });
 
     // Delegate click for "Load" buttons in search results
-    document.getElementById("textSearchResults").addEventListener("click", (e) => {
+    document.getElementById("textSearchResults").addEventListener("click", async (e) => {
         const btn = e.target.closest("button[data-entry-index]");
         if (!btn) return;
         const idx = parseInt(btn.getAttribute("data-entry-index"), 10);
@@ -97,7 +135,25 @@ function setupTextFinderHandlers() {
             alert("Could not find selected entry (internal error).");
             return;
         }
-        loadTextEntryIntoTextarea(entry);
+
+        // Auto-collapse manual input section when loading from corpus
+        const manualBody = document.getElementById("manualInputBody");
+        const manualToggle = document.getElementById("manualInputToggle");
+        if (!manualBody.classList.contains("collapsed")) {
+            manualBody.classList.add("collapsed");
+            manualToggle.textContent = "Paste Your Own Text ▼";
+        }
+
+        // Load and auto-process the text
+        await loadTextEntry(entry, (text, metadata) => {
+            analyzeText(text, {
+                source: 'corpus',
+                corpusId: metadata.corpusId,
+                corpusLabel: metadata.corpusLabel,
+                path: metadata.path,
+                displayName: metadata.displayName
+            });
+        });
     });
 }
 
@@ -160,7 +216,7 @@ function setupCorpusSearchHandlers() {
         }
     });
 
-    // Load text from corpus search results
+    // Load text from corpus search results (auto-process)
     document.getElementById("corpusSearchResults").addEventListener("click", async (e) => {
         const btn = e.target.closest("button[data-doc-id]");
         if (!btn) return;
@@ -173,7 +229,74 @@ function setupCorpusSearchHandlers() {
             return;
         }
 
-        await loadTextEntryIntoTextarea(entry);
+        // Auto-collapse manual input section
+        const manualBody = document.getElementById("manualInputBody");
+        const manualToggle = document.getElementById("manualInputToggle");
+        if (!manualBody.classList.contains("collapsed")) {
+            manualBody.classList.add("collapsed");
+            manualToggle.textContent = "Paste Your Own Text ▼";
+        }
+
+        // Load and auto-process the text
+        await loadTextEntry(entry, (text, metadata) => {
+            analyzeText(text, {
+                source: 'corpus',
+                corpusId: metadata.corpusId,
+                corpusLabel: metadata.corpusLabel,
+                path: metadata.path,
+                displayName: metadata.displayName
+            });
+        });
+    });
+}
+
+/**
+ * Setup allo/auto classification handlers
+ */
+function setupAlloAutoHandlers() {
+    const runBtn = document.getElementById("runAlloAutoBtn");
+    const statusEl = document.getElementById("alloAutoStatus");
+    const checkboxEl = document.getElementById("showAlloHeat");
+
+    // Run allo/auto classification
+    runBtn.addEventListener("click", async () => {
+        if (!LAST_CLAUSES) {
+            alert("No text has been analyzed yet.");
+            return;
+        }
+
+        // Disable button and show status
+        runBtn.disabled = true;
+        statusEl.textContent = "Running classification...";
+
+        const modelStatus = document.getElementById("modelStatus");
+        const alloAutoScores = await classifyClauses(
+            LAST_CLAUSES,
+            (status) => { modelStatus.textContent = status; }
+        );
+
+        // Cache results
+        LAST_ALLOAUTO = alloAutoScores;
+
+        // Enable checkbox and re-render
+        checkboxEl.checked = true;
+        rerenderWithCurrentHeatmap();
+
+        statusEl.textContent = "Classification complete!";
+        setTimeout(() => {
+            statusEl.textContent = "";
+        }, 3000);
+    });
+
+    // When checkbox is toggled, re-render (only works if classification has been run)
+    checkboxEl.addEventListener("change", () => {
+        if (checkboxEl.checked && !LAST_ALLOAUTO) {
+            // User tried to enable allo/auto without running it first
+            alert("Please run Allo/Auto classification first.");
+            checkboxEl.checked = false;
+            return;
+        }
+        rerenderWithCurrentHeatmap();
     });
 }
 
@@ -181,18 +304,21 @@ function setupCorpusSearchHandlers() {
  * Setup heatmap toggle handlers
  */
 function setupHeatmapToggleHandlers() {
-    function rerenderWithCurrentHeatmap() {
-        if (!LAST_CLAUSES) return;
-        const resultsDiv = document.getElementById("results");
-        const lasnas = document.getElementById("lasnas").checked;
-        const html = renderResults(LAST_CLAUSES, LAST_LABELS, LAST_ALLOAUTO, LAST_VERSE, lasnas);
-        resultsDiv.innerHTML = html;
-    }
-
-    ["showQuotesHeat", "showAlloHeat", "showVerseHeat"].forEach(id => {
+    ["showQuotesHeat", "showVerseHeat"].forEach(id => {
         const el = document.getElementById(id);
         if (el) {
             el.addEventListener("change", rerenderWithCurrentHeatmap);
         }
     });
+}
+
+/**
+ * Re-render results with current heatmap settings
+ */
+function rerenderWithCurrentHeatmap() {
+    if (!LAST_CLAUSES) return;
+    const resultsDiv = document.getElementById("results");
+    const lasnas = document.getElementById("lasnas").checked;
+    const html = renderResults(LAST_CLAUSES, LAST_LABELS, LAST_ALLOAUTO, LAST_VERSE, lasnas);
+    resultsDiv.innerHTML = html;
 }
