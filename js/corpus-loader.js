@@ -14,6 +14,18 @@ const CORPORA = [
         manifestUrl: "zips/derge_manifest.json"
     },
     {
+        id: "lhasa",
+        label: "Lhasa",
+        zipUrl: "zips/all_lhasa.zip",
+        manifestUrl: "zips/lhasa_manifest.json"
+    },
+    {
+        id: "lithang",
+        label: "Lithang",
+        zipUrl: "zips/all_lithang.zip",
+        manifestUrl: "zips/lithang_manifest.json"
+    },
+    {
         id: "nyingma",
         label: "Nyingma",
         zipUrl: "zips/all_nyingma.zip",
