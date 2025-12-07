@@ -125,11 +125,11 @@ function setupTextFinderHandlers() {
         renderSearchResults(matches);
     });
 
-    // Delegate click for "Load" buttons in search results
+    // Delegate click for clickable result items
     document.getElementById("textSearchResults").addEventListener("click", async (e) => {
-        const btn = e.target.closest("button[data-entry-index]");
-        if (!btn) return;
-        const idx = parseInt(btn.getAttribute("data-entry-index"), 10);
+        const item = e.target.closest(".text-finder-item-clickable");
+        if (!item) return;
+        const idx = parseInt(item.getAttribute("data-entry-index"), 10);
         const entry = getAllTextEntries().find(ent => ent.index === idx);
         if (!entry) {
             alert("Could not find selected entry (internal error).");
@@ -217,37 +217,40 @@ function setupCorpusSearchHandlers() {
     });
 
     // Load text from corpus search results (auto-process)
-    document.getElementById("corpusSearchResults").addEventListener("click", async (e) => {
-        const btn = e.target.closest("button[data-doc-id]");
-        if (!btn) return;
+    const corpusSearchResults = document.getElementById("corpusSearchResults");
+    if (corpusSearchResults) {
+        corpusSearchResults.addEventListener("click", async (e) => {
+            const item = e.target.closest(".corpus-search-result-item-clickable");
+            if (!item) return;
 
-        const docId = parseInt(btn.getAttribute("data-doc-id"), 10);
-        const entry = getAllTextEntries().find(ent => ent.index === docId);
+            const docId = parseInt(item.getAttribute("data-doc-id"), 10);
+            const entry = getAllTextEntries().find(ent => ent.index === docId);
 
-        if (!entry) {
-            alert("Could not find selected text (internal error).");
-            return;
-        }
+            if (!entry) {
+                alert("Could not find selected text (internal error).");
+                return;
+            }
 
-        // Auto-collapse manual input section
-        const manualBody = document.getElementById("manualInputBody");
-        const manualToggle = document.getElementById("manualInputToggle");
-        if (!manualBody.classList.contains("collapsed")) {
-            manualBody.classList.add("collapsed");
-            manualToggle.textContent = "Paste Your Own Text ▼";
-        }
+            // Auto-collapse manual input section
+            const manualBody = document.getElementById("manualInputBody");
+            const manualToggle = document.getElementById("manualInputToggle");
+            if (!manualBody.classList.contains("collapsed")) {
+                manualBody.classList.add("collapsed");
+                manualToggle.textContent = "Paste Your Own Text ▼";
+            }
 
-        // Load and auto-process the text
-        await loadTextEntry(entry, (text, metadata) => {
-            analyzeText(text, {
-                source: 'corpus',
-                corpusId: metadata.corpusId,
-                corpusLabel: metadata.corpusLabel,
-                path: metadata.path,
-                displayName: metadata.displayName
+            // Load and auto-process the text
+            await loadTextEntry(entry, (text, metadata) => {
+                analyzeText(text, {
+                    source: 'corpus',
+                    corpusId: metadata.corpusId,
+                    corpusLabel: metadata.corpusLabel,
+                    path: metadata.path,
+                    displayName: metadata.displayName
+                });
             });
         });
-    });
+    }
 }
 
 /**

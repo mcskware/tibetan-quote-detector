@@ -162,13 +162,12 @@ function renderCorpusSearchResults(results, query) {
         const matchingLines = findMatchingLines(doc, query);
 
         html += `
-<div class="corpus-search-result-item">
+<div class="corpus-search-result-item corpus-search-result-item-clickable" data-doc-id="${doc.id}">
     <div class="corpus-search-result-header">
         <div>
             <div class="corpus-search-result-title">${safeTitle}</div>
             <div class="corpus-search-result-meta">[${safeCorpus}] ${safePath}</div>
         </div>
-        <button type="button" data-doc-id="${doc.id}">Load</button>
     </div>`;
 
         // Show up to 3 matching contexts

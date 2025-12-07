@@ -113,6 +113,18 @@ span.closer {
     font-size: 0.9rem;
 }
 
+.text-finder-item-clickable {
+    cursor: pointer;
+    padding: 0.5rem;
+    margin: 0 -0.5rem 0.25rem -0.5rem;
+    border-radius: 4px;
+    transition: background-color 0.2s;
+}
+
+.text-finder-item-clickable:hover {
+    background-color: #f0f7ff;
+}
+
 .text-finder-item span {
     margin-right: 0.5rem;
 }

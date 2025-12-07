@@ -137,15 +137,11 @@ export function renderSearchResults(entries) {
         const safeCorpus = escapeHtml(entry.corpusLabel);
 
         html += `
-<div class="text-finder-item">
+<div class="text-finder-item text-finder-item-clickable" data-entry-index="${entry.index}">
   <div>
     <span>${safeName}</span>
     <div class="text-finder-meta">[${safeCorpus}] ${safePath}</div>
   </div>
-  <button type="button"
-          data-entry-index="${entry.index}">
-    Load
-  </button>
 </div>`;
     }
     resultsEl.innerHTML = html;
