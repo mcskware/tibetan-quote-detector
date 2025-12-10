@@ -138,7 +138,10 @@ Verse: ${verse ? "yes" : "no"}`;
  */
 export function setupResultsCopyHandler() {
     const resultsDiv = document.getElementById("results");
-    if (!resultsDiv) return;
+    if (!resultsDiv) {
+        console.log("Failed to setup results handler")
+        return;
+    }
 
     resultsDiv.addEventListener("copy", (event) => {
         const selection = window.getSelection();

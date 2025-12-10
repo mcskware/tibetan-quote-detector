@@ -33,7 +33,7 @@ export function initializeUIHandlers() {
     setupManualInputToggle();
     setupAnalyzeButton();
     setupTextFinderHandlers();
-    setupCorpusSearchHandlers();
+    //setupCorpusSearchHandlers();
     setupHeatmapToggleHandlers();
     setupAlloAutoHandlers();
 }
