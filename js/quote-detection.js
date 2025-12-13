@@ -140,7 +140,7 @@ export function detectQuotes(clauses, lasnas) {
                             labels[k] = "inquote";
                         }
                         labels[j] = "closer";
-                        i = j;
+                        i = j - 1;
                     }
                     break;
                 }
